@@ -6,9 +6,12 @@ import os
 import json
 from datetime import datetime
 from jinja2 import Environment, FileSystemLoader
+import signal
+import sys
 
 STORAGE_DIR = "storage"
 DATA_FILE = os.path.join(STORAGE_DIR, "data.json")
+messages_store = {}
 
 
 class HttpHandler(BaseHTTPRequestHandler):
@@ -41,38 +44,14 @@ class HttpHandler(BaseHTTPRequestHandler):
 
     def store_message(self, data_dict):
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
-        if not os.path.exists(STORAGE_DIR):
-            os.makedirs(STORAGE_DIR)
-
-        if os.path.exists(DATA_FILE):
-            with open(DATA_FILE, "r", encoding="utf-8") as file:
-                try:
-                    data_store = json.load(file)
-                except json.JSONDecodeError:
-                    data_store = {}
-        else:
-            data_store = {}
-
-        data_store[timestamp] = data_dict
-
-        with open(DATA_FILE, "w", encoding="utf-8") as file:
-            json.dump(data_store, file, indent=2, ensure_ascii=False)
+        messages_store[timestamp] = data_dict
 
     def show_messages(self):
-        if os.path.exists(DATA_FILE):
-            with open(DATA_FILE, "r", encoding="utf-8") as file:
-                try:
-                    messages = json.load(file)
-                except json.JSONDecodeError:
-                    messages = {}
-        else:
-            messages = {}
-
         env = Environment(loader=FileSystemLoader("."))
         template = env.get_template("messages_template.html")
 
         html_content = template.render(
-            messages=messages,
+            messages=messages_store,
         )
         self.send_response(200)
         self.send_header("Content-type", "text/html")
@@ -98,13 +77,37 @@ class HttpHandler(BaseHTTPRequestHandler):
             self.wfile.write(file.read())
 
 
+def load_messages_from_disk():
+    global messages_store
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, "r", encoding="utf-8") as file:
+            messages_store = json.load(file)
+
+
+def save_messages_to_disk():
+    if not os.path.exists(STORAGE_DIR):
+        os.makedirs(STORAGE_DIR)
+    with open(DATA_FILE, "w", encoding="utf-8") as file:
+        json.dump(messages_store, file, indent=2, ensure_ascii=False)
+
+
+def signal_handler(sig, frame):
+    save_messages_to_disk()
+    sys.exit(0)
+
+
 def run(server_class=HTTPServer, handler_class=HttpHandler):
+    load_messages_from_disk()
     server_address = ("", 3000)
     http = server_class(server_address, handler_class)
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
     try:
         http.serve_forever()
     except KeyboardInterrupt:
-        http.server_close()
+        pass
+    finally:
+        save_messages_to_disk()
 
 
 if __name__ == "__main__":
