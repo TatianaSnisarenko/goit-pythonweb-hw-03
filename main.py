@@ -1,13 +1,13 @@
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import urllib.parse
 import mimetypes
-import pathlib
 import os
 import json
 from datetime import datetime
 from jinja2 import Environment, FileSystemLoader
 import signal
 import sys
+from pathlib import Path
 
 STORAGE_DIR = "storage"
 DATA_FILE = os.path.join(STORAGE_DIR, "data.json")
@@ -15,6 +15,8 @@ messages_store = {}
 
 
 class HttpHandler(BaseHTTPRequestHandler):
+
+    BASE_PATH = Path(__file__).parent
 
     def do_POST(self):
         data = self.rfile.read(int(self.headers["Content-Length"]))
@@ -37,10 +39,17 @@ class HttpHandler(BaseHTTPRequestHandler):
         elif pr_url.path == "/read":
             self.show_messages()
         else:
-            if pathlib.Path().joinpath(pr_url.path[1:]).exists():
-                self.send_static()
+            if self.is_static_file(pr_url.path):
+                self.send_static(pr_url.path)
             else:
                 self.send_html_file("error.html", 404)
+
+    def is_static_file(self, path):
+        static_dirs = ["img", "css"]
+        if any(path.startswith(f"/{dir}/") for dir in static_dirs):
+            static_file_path = self.BASE_PATH / path[1:]
+            return static_file_path.exists()
+        return False
 
     def store_message(self, data_dict):
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
@@ -48,7 +57,7 @@ class HttpHandler(BaseHTTPRequestHandler):
 
     def show_messages(self):
         env = Environment(loader=FileSystemLoader("."))
-        template = env.get_template("messages_template.html")
+        template = env.get_template("/templates/messages_template.html")
 
         html_content = template.render(
             messages=messages_store,
@@ -62,10 +71,10 @@ class HttpHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-type", "text/html")
         self.end_headers()
-        with open(filename, "rb") as fd:
+        with Path.open(self.BASE_PATH / "templates" / filename, "rb") as fd:
             self.wfile.write(fd.read())
 
-    def send_static(self):
+    def send_static(self, path):
         self.send_response(200)
         mt = mimetypes.guess_type(self.path)
         if mt:
@@ -73,7 +82,8 @@ class HttpHandler(BaseHTTPRequestHandler):
         else:
             self.send_header("Content-type", "text/plain")
         self.end_headers()
-        with open(f".{self.path}", "rb") as file:
+        static_file_path = self.BASE_PATH / path[1:]
+        with static_file_path.open("rb") as file:
             self.wfile.write(file.read())
 
 
